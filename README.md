@@ -1,36 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TwinMind Live Suggestions
 
-## Getting Started
+A 3-column live AI meeting copilot built with Next.js, TypeScript, and Tailwind CSS.
 
-First, run the development server:
+## Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+2. Start the dev server:
+   ```bash
+   npm run dev
+   ```
+
+3. Open [http://localhost:3000](http://localhost:3000) and click the gear icon to enter your **Groq API key**.
+
+You can get a free Groq API key at [console.groq.com](https://console.groq.com).
+
+## Stack
+
+| Layer | Tech |
+|---|---|
+| Framework | Next.js 15 (App Router) |
+| Language | TypeScript |
+| Styling | Tailwind CSS v4 |
+| Transcription | Groq Whisper Large V3 |
+| LLM | meta-llama/llama-4-maverick-17b-128e-instruct via Groq |
+| Audio | Browser MediaRecorder API |
+
+## Architecture
+
+```
+app/
+  page.tsx              # Root layout + state orchestration
+components/
+  Transcript.tsx        # Left column: mic + live transcript
+  Suggestions.tsx       # Middle column: suggestion cards
+  Chat.tsx              # Right column: streaming chat
+  Settings.tsx          # Gear icon modal
+  ExportButton.tsx      # JSON download
+hooks/
+  useMicRecorder.ts     # MediaRecorder wrapper with 30s chunking
+  useSuggestions.ts     # Suggestion batch state + fetch logic
+lib/
+  groq.ts               # All Groq API calls (transcription, suggestions, chat stream)
+constants/
+  prompts.ts            # Default prompts + model IDs + badge config
+types/
+  index.ts              # Shared TypeScript types
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## How It Works
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Transcription flow
+MediaRecorder captures audio in 1-second slices, buffered client-side. Every 30 seconds (or on stop) the buffered chunks are assembled into a single WebM blob and sent to Groq Whisper Large V3, which returns plain text appended to the transcript panel.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Suggestions flow
+After each transcript update, the last N words (configurable, default 500) are sent to Llama 4 Maverick with the suggestions prompt. The model returns a clean JSON array of 3 cards. Each batch is prepended to the middle column with a timestamp so older batches scroll down naturally.
 
-## Learn More
+### Chat flow
+Clicking a suggestion or typing a message sends the conversation history plus the last N words of transcript (default 1000) as system context. Responses stream token-by-token using the Groq SSE API.
 
-To learn more about Next.js, take a look at the following resources:
+## Prompt Strategy
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+All prompts live in `constants/prompts.ts` and are fully editable at runtime via the Settings modal.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Suggestions prompt** — instructs the model to return a strict JSON array with no markdown wrapping, choosing from 5 typed suggestion categories. Constraining the output format prevents parsing failures.
+- **Detailed answer prompt** — takes the clicked suggestion text plus the transcript as context, asks for 3-6 direct sentences. Gives richer answers than a bare suggestion click.
+- **Chat prompt** — injected as `system` role so it frames the entire conversation without polluting the visible message history.
 
-## Deploy on Vercel
+## Tradeoffs
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **Client-side API calls** — all Groq calls are made directly from the browser (no server routes). This keeps the setup simple (no API routes needed, no env vars) but exposes the API key in network traffic. For production, route calls through `/api` endpoints.
+- **30-second chunking** — long enough to give Whisper useful context, short enough to feel live. Users on slow connections may see a slight lag. The chunk interval is not currently user-configurable but lives in `useMicRecorder.ts`.
+- **No deduplication on suggestions** — the prompt instructs the model to avoid repeats, but there's no client-side diffing across batches. A future improvement would be to pass previous suggestion previews as negative examples in the prompt.
+- **Single-session state** — all state lives in React. Refreshing the page resets everything except the API key and settings (which persist in localStorage).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Export
+
+The Export button downloads a JSON file containing:
+- Full transcript text
+- All suggestion batches with ISO timestamps
+- Full chat history with ISO timestamps and role labels
