@@ -1,41 +1,28 @@
-import { GROQ_CHAT_MODEL, GROQ_TRANSCRIPTION_MODEL } from '@/constants/prompts';
+import { GROQ_CHAT_MODEL } from '@/constants/prompts';
 import { ChatMessage, Suggestion } from '@/types';
 
 const GROQ_API_BASE = 'https://api.groq.com/openai/v1';
 
+const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+
 export async function transcribeAudio(audioBlob: Blob, apiKey: string): Promise<string> {
-  const sendFile = async (file: File): Promise<Response> => {
-    const formData = new FormData();
-    formData.append('file', file, file.name);
-    formData.append('model', GROQ_TRANSCRIPTION_MODEL);
-    formData.append('response_format', 'text');
-    return fetch(`${GROQ_API_BASE}/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: formData,
-    });
-  };
+  if (audioBlob.size > MAX_AUDIO_BYTES) {
+    console.warn('[transcribeAudio] chunk too large, skipping:', audioBlob.size, 'bytes');
+    return '';
+  }
 
-  const webmFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
-  console.log('[transcribeAudio] original blob type:', audioBlob.type, '→ trying recording.webm');
+  const formData = new FormData();
+  formData.append('audio', audioBlob);
 
-  let response = await sendFile(webmFile);
-  console.log('[transcribeAudio] webm status:', response.status);
+  const response = await fetch('/api/transcribe', {
+    method: 'POST',
+    headers: { 'x-groq-api-key': apiKey },
+    body: formData,
+  });
 
   if (!response.ok) {
-    const webmError = await response.text();
-    console.error('[transcribeAudio] webm failed:', response.status, webmError);
-
-    const mp4File = new File([audioBlob], 'recording.mp4', { type: 'audio/mp4' });
-    console.log('[transcribeAudio] retrying as recording.mp4');
-    response = await sendFile(mp4File);
-    console.log('[transcribeAudio] mp4 status:', response.status);
-
-    if (!response.ok) {
-      const mp4Error = await response.text();
-      console.error('[transcribeAudio] mp4 also failed:', response.status, mp4Error);
-      throw new Error(`Transcription failed: ${mp4Error}`);
-    }
+    const error = await response.text();
+    throw new Error(`Transcription failed: ${error}`);
   }
 
   return response.text();

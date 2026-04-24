@@ -8,20 +8,12 @@ interface UseMicRecorderOptions {
   onError: (err: Error) => void;
 }
 
-export function useMicRecorder({ chunkIntervalMs = 30000, onChunk, onError }: UseMicRecorderOptions) {
+export function useMicRecorder({ chunkIntervalMs = 15000, onChunk, onError }: UseMicRecorderOptions) {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mimeTypeRef = useRef<string>('audio/webm');
-
-  const flushChunk = useCallback(() => {
-    if (chunksRef.current.length === 0) return;
-    const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
-    chunksRef.current = [];
-    onChunk(blob);
-  }, [onChunk]);
+  const activeRef = useRef(false);
 
   const start = useCallback(async () => {
     try {
@@ -36,35 +28,46 @@ export function useMicRecorder({ chunkIntervalMs = 30000, onChunk, onError }: Us
 
       console.log('[useMicRecorder] using mimeType:', mimeType);
       mimeTypeRef.current = mimeType;
-
-      const recorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorderRef.current = recorder;
-      chunksRef.current = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.onerror = () => {
-        onError(new Error('MediaRecorder error'));
-      };
-
-      recorder.start(1000);
+      activeRef.current = true;
       setIsRecording(true);
 
-      intervalRef.current = setInterval(flushChunk, chunkIntervalMs);
+      const startChunk = () => {
+        if (!activeRef.current) return;
+
+        const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 16000 });
+        mediaRecorderRef.current = recorder;
+        const chunks: Blob[] = [];
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+
+        recorder.onstop = () => {
+          if (chunks.length > 0) {
+            onChunk(new Blob(chunks, { type: mimeTypeRef.current }));
+          }
+          if (activeRef.current) startChunk();
+        };
+
+        recorder.onerror = () => {
+          onError(new Error('MediaRecorder error'));
+        };
+
+        recorder.start();
+        setTimeout(() => {
+          if (recorder.state !== 'inactive') recorder.stop();
+        }, chunkIntervalMs);
+      };
+
+      startChunk();
     } catch (err) {
       onError(err instanceof Error ? err : new Error('Microphone access denied'));
     }
-  }, [chunkIntervalMs, flushChunk, onError]);
+  }, [chunkIntervalMs, onChunk, onError]);
 
   const stop = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-
-    flushChunk();
+    activeRef.current = false;
+    setIsRecording(false);
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
@@ -74,9 +77,7 @@ export function useMicRecorder({ chunkIntervalMs = 30000, onChunk, onError }: Us
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
-
-    setIsRecording(false);
-  }, [flushChunk]);
+  }, []);
 
   return { isRecording, start, stop };
 }
