@@ -26,7 +26,7 @@ You can get a free Groq API key at [console.groq.com](https://console.groq.com).
 | Language | TypeScript |
 | Styling | Tailwind CSS v4 |
 | Transcription | Groq Whisper Large V3 |
-| LLM | meta-llama/llama-4-maverick-17b-128e-instruct via Groq |
+| LLM | llama-3.3-70b-versatile via Groq |
 | Audio | Browser MediaRecorder API |
 
 ## Architecture
@@ -72,7 +72,7 @@ All prompts live in `constants/prompts.ts` and are fully editable at runtime via
 
 ## Tradeoffs
 
-- **Client-side API calls** — all Groq calls are made directly from the browser (no server routes). This keeps the setup simple (no API routes needed, no env vars) but exposes the API key in network traffic. For production, route calls through `/api` endpoints.
+- **API call routing** — transcription routes through `/api/transcribe` to handle audio format conversion server-side. Suggestion and chat calls go directly from the browser for lower latency.
 - **30-second chunking** — long enough to give Whisper useful context, short enough to feel live. Users on slow connections may see a slight lag. The chunk interval is not currently user-configurable but lives in `useMicRecorder.ts`.
 - **No deduplication on suggestions** — the prompt instructs the model to avoid repeats, but there's no client-side diffing across batches. A future improvement would be to pass previous suggestion previews as negative examples in the prompt.
 - **Single-session state** — all state lives in React. Refreshing the page resets everything except the API key and settings (which persist in localStorage).
